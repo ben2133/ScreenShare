@@ -33,7 +33,7 @@ std::string getWindowName(Display* disp, Window win);
 int getWindowWorkspace(Display* disp, Window win);
 
 // Получение размер и кардинат окон
-void getWindowGeometry(Display* disp, Window win, int& x, int& y, int& width, int& height);
+std::vector<int> getWindowGeometry(Display* disp, Window win);
 
 
 int main(int argc, char const *argv[])
@@ -73,10 +73,9 @@ int main(int argc, char const *argv[])
     {
         std::string name = getWindowName(display, list[i]);
         int ws = getWindowWorkspace(display, list[i]);
-        int x, y, w, h;
-        getWindowGeometry(display, list[i], x, y, w, h);
+        std::vector<int> windowParametr = getWindowGeometry(display, list[i]);
 
-        windowList.push_back(name);
+        windowList.push_back(name + " |" + std::to_string(windowParametr[2]) + "x" + std::to_string(windowParametr[3]));
 
         // std::cout << "Окно #" << i << ":\n";
         // std::cout << "  Название: " << name << "\n";
@@ -84,7 +83,7 @@ int main(int argc, char const *argv[])
         // std::cout << "  Размер: " << w << "x" << h << " (x=" << x << ", y=" << y << ")\n\n";
     }
 
-    std::shared_ptr<ftxui::ComponentBase> windowMenu = ftxui::Menu( &windowList, &selectedWindow, ftxui::MenuOption::Vertical() );
+    std::shared_ptr<ftxui::ComponentBase> windowMenu = ftxui::Radiobox( &windowList, &selectedWindow );
     ftxui::Component WindowMenu = ftxui::Renderer( windowMenu, [&] 
     {
         return ftxui::vbox({
@@ -225,8 +224,9 @@ int getWindowWorkspace(Display* disp, Window win)
 }
 
 // Получение кардинат окон
-void getWindowGeometry(Display* disp, Window win, int& x, int& y, int& width, int& height) 
+std::vector<int> getWindowGeometry(Display* disp, Window win) 
 {
+    int x, y, width, height;
     XWindowAttributes attr;
     if (XGetWindowAttributes(disp, win, &attr)) 
     {
@@ -234,11 +234,13 @@ void getWindowGeometry(Display* disp, Window win, int& x, int& y, int& width, in
         int abs_x, abs_y;
         XTranslateCoordinates(disp, win, XDefaultRootWindow(disp), 0, 0, &abs_x, &abs_y, &child);
 
-        x       = abs_x;
-        y       = abs_y;
-        width   = attr.width;
-        height  = attr.height;
+        x       =  abs_x;
+        y       =  abs_y;
+        width   =  attr.width;
+        height  =  attr.height;
     } else {
         x = y = width = height = -1;
     }
+
+    return { x, y, width, height };
 }
