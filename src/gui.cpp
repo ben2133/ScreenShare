@@ -8,13 +8,6 @@
 #include <vector>  // for vector
 #include <string>    // for string, basic_string, allocator
 
-#include "ftxui/component/captured_mouse.hpp"      // for ftxui
-#include "ftxui/component/component.hpp"           // for Radiobox, Renderer
-#include "ftxui/component/component_base.hpp"      // for ComponentBase
-#include "ftxui/component/screen_interactive.hpp"  // for ScreenInteractive
-#include "ftxui/component/component_options.hpp"   // for MenuOption
-#include "ftxui/dom/elements.hpp"  // for operator|, Element, size, border, frame, HEIGHT, LESS_THAN
-
 #include <opencv2/opencv.hpp>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -38,9 +31,7 @@ std::vector<int> getWindowGeometry(Display* disp, Window win);
 
 int main(int argc, char const *argv[])
 {
-    // The data
-    std::string winWidth;
-    std::string winHeight;
+    std::string command;
 
     // Открываем окно
     Display* display = XOpenDisplay(nullptr);
@@ -49,22 +40,13 @@ int main(int argc, char const *argv[])
         std::cerr << "Не удалось открыть дисплей\n";
         return 1;
     }
-
-    /* *********************
-     * Список открытых окон
-     * ********************/
-
-    // List of window
-    std::vector<std::string> windowList;
-    int selectedWindow = 0;
-
+    
     // Getting windows list
     unsigned long len;
     Window* list = getWindowList(display, &len);
     if (!list) 
     {
         std::cerr << "Не удалось получить список окон\n";
-        XCloseDisplay(display);
         return 1;
     }
 
@@ -73,51 +55,40 @@ int main(int argc, char const *argv[])
     {
         std::string name = getWindowName(display, list[i]);
         int ws = getWindowWorkspace(display, list[i]);
-        std::vector<int> windowParametr = getWindowGeometry(display, list[i]);
 
-        windowList.push_back(name + " |" + std::to_string(windowParametr[2]) + "x" + std::to_string(windowParametr[3]));
-
-        // std::cout << "Окно #" << i << ":\n";
-        // std::cout << "  Название: " << name << "\n";
-        // std::cout << "  Рабочее пространство: " << ws << "\n";
-        // std::cout << "  Размер: " << w << "x" << h << " (x=" << x << ", y=" << y << ")\n\n";
+        std::cout << "Окно #[" << i << "] :::\n";
+        std::cout << " ~ " << name << "\n";
+        std::cout << " Рабочее пространство: " << ws << "\n\n";
     }
 
-    std::shared_ptr<ftxui::ComponentBase> windowMenu = ftxui::Radiobox( &windowList, &selectedWindow );
-    ftxui::Component WindowMenu = ftxui::Renderer( windowMenu, [&] 
+    std::cout << ">>> ";
+    std::cin >> command;
+
+    while (true)
     {
-        return ftxui::vbox({
-            ftxui::text( "Список окон:" ) | ftxui::bold | ftxui::color(ftxui::Color::CyanLight),
-            ftxui::separator(),
-            windowMenu->Render()
-        }) | ftxui::vscroll_indicator | ftxui::frame | ftxui::border | ftxui::size(ftxui::HEIGHT, ftxui::LESS_THAN, 100);
-    });
+        // std::cout << typeid(std::stoi(command)).name() << std::endl;
+        std::vector<int> windowParametr = getWindowGeometry(display, list[ std::stoi(command) ]);
 
-    /* **********************
-     * Параметры размера окон
-     * *********************/
-    ftxui::Component sizeWindow = ftxui::Container::Vertical({});
-    std::vector<std::string> titleText {"Width: ", "Height: "};
+        std::cout << " { " << windowParametr[2] << "x" << windowParametr[3] << " }";
+        std::cout << " ::: x=" << windowParametr[0] << " y=" << windowParametr[1] << " ";
 
-    // Input Objects
-    ftxui::Component windowWidth   = ftxui::Input(&winWidth, "Width");
-    ftxui::Component windowHeight  = ftxui::Input(&winHeight, "Height");
-    
-    ftxui::Component component = ftxui::Container::Vertical({
-        windowWidth, windowHeight 
-    });
+        // Захватываем экран
+        cv::Mat screen = captureScreen( display, windowParametr[2], windowParametr[3], windowParametr[0], windowParametr[1] );
 
-    ftxui::Component WindowSizeInput = ftxui::Renderer(component, [&] {
-        return ftxui::vbox({
-            ftxui::text( "Параметры экрана:" ) | ftxui::bold | ftxui::color(ftxui::Color::CyanLight),
-            ftxui::separator(),
-            ftxui::hbox( ftxui::text( "-> Width  : " ), windowWidth->Render() ),
-            ftxui::hbox( ftxui::text( "-> Height : " ), windowHeight->Render() ),
-        }) | ftxui::frame | ftxui::border | ftxui::size(ftxui::HEIGHT, ftxui::LESS_THAN, 100);
-    });
+        // Сохраняем в файл
+        //cv::imwrite("screenshot.png", screen);
+        std::cout << "Скриншот сохранен в screenshot.png" << std::endl;
 
-    auto screen = ftxui::ScreenInteractive::TerminalOutput();
-    screen.Loop(WindowMenu);
+        // Показываем в окне (опционально)
+        cv::imshow("Screen", screen);
+        char key = cv::waitKey(1000);
+        if (key == 27) break;  // 27 = ESC    
+    }
+
+    XFree(list);
+    XCloseDisplay(display);
+    cv::destroyAllWindows();
+
     return 0;
 }
 
@@ -151,7 +122,6 @@ cv::Mat captureScreen(Display* disp, int width, int height, int x, int y)
 
     // Освобождаем ресурсы
     XDestroyImage(img);
-    XCloseDisplay(disp);
 
     return bgrMat;
 }
