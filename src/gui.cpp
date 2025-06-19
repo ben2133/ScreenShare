@@ -1,17 +1,27 @@
 // g++ -std=c++17 -o tui interfeyc.cpp -lftxui-component -lftxui-dom -lftxui-screen
 // g++ gui.cpp -o screen2 -I/usr/include/opencv4 -lX11 -lopencv_core -lopencv_highgui  -lopencv_imgproc -lopencv_imgcodecs -lftxui-component -lftxui-dom -lftxui-screen
+// g++ gui.cpp -o screen2 `pkg-config --cflags --libs opencv4` -lX11
+
 
 #include <functional>  // for function
 #include <iostream>  // for basic_ostream::operator<<, operator<<, endl, basic_ostream, basic_ostream<>::__ostream_type, cout, ostream
-#include <cstdint>
+#include <cstring>
 #include <memory>  // for shared_ptr, __shared_ptr_access
 #include <vector>  // for vector
 #include <string>    // for string, basic_string, allocator
+
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
+#include <sstream>
+#include <cerrno>
+#include <cstring>
 
 #include <opencv2/opencv.hpp>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
+
 
 // Захват экрана
 cv::Mat captureScreen(Display* disp, int width, int height, int x, int y);
@@ -28,9 +38,16 @@ int getWindowWorkspace(Display* disp, Window win);
 // Получение размер и кардинат окон
 std::vector<int> getWindowGeometry(Display* disp, Window win);
 
+// Простая отправка HTTP-ответа с изображением
+void sendHttpResponse(int client_sock, const std::vector<uchar>& image_data);
+
+// Проверка порта 
+bool is_port_in_use(int port); 
 
 int main(int argc, char const *argv[])
 {
+
+
     std::string command;
 
     // Открываем окно
@@ -64,27 +81,89 @@ int main(int argc, char const *argv[])
     std::cout << ">>> ";
     std::cin >> command;
 
-    while (true)
-    {
-        // std::cout << typeid(std::stoi(command)).name() << std::endl;
-        std::vector<int> windowParametr = getWindowGeometry(display, list[ std::stoi(command) ]);
+    // Создание сокета
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in address = {0};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_port = htons(8085);
 
-        std::cout << " { " << windowParametr[2] << "x" << windowParametr[3] << " }";
-        std::cout << " ::: x=" << windowParametr[0] << " y=" << windowParametr[1] << " ";
-
-        // Захватываем экран
-        cv::Mat screen = captureScreen( display, windowParametr[2], windowParametr[3], windowParametr[0], windowParametr[1] );
-
-        // Сохраняем в файл
-        //cv::imwrite("screenshot.png", screen);
-        std::cout << "Скриншот сохранен в screenshot.png" << std::endl;
-
-        // Показываем в окне (опционально)
-        cv::imshow("Screen", screen);
-        char key = cv::waitKey(1000);
-        if (key == 27) break;  // 27 = ESC    
+    std::cout << is_port_in_use(address.sin_port) << std::endl;
+     // Проверка порта перед запуском
+    if (is_port_in_use(address.sin_port)) {
+        std::cerr << "🚨 Ошибка: Порт " << address.sin_port << " уже используется!\n";
+        std::cerr << "Возможные решения:\n";
+        std::cerr << "1. Закройте другую копию программы\n";
+        std::cerr << "2. Используйте другой порт: ./program 8086\n";
+        std::cerr << "3. Найдите и завершите процесс: sudo lsof -i :" << address.sin_port << "\n";
+        return 1;
     }
 
+    bind(server_fd, (struct sockaddr*)&address, sizeof(address));
+    listen(server_fd, 5);
+
+    std::cout << "Сервер запущен на http://localhost:8085\n";
+
+    while (true)
+    {
+        int client_sock = accept(server_fd, nullptr, nullptr);
+        if (client_sock < 0) continue;
+
+        char buffer[2048] = {0};
+        read(client_sock, buffer, sizeof(buffer));
+        std::string request(buffer);
+
+        std::istringstream iss(request);
+        std::string method, path;
+        iss >> method >> path;
+
+        if (path.find("/screenshot") == 0)
+        {
+            try 
+            {
+                // std::cout << typeid(std::stoi(command)).name() << std::endl;
+                std::vector<int> windowParametr = getWindowGeometry(display, list[ std::stoi(command) ]);
+
+                std::cout << " { " << windowParametr[2] << "x" << windowParametr[3] << " }";
+                std::cout << " ::: x=" << windowParametr[0] << " y=" << windowParametr[1] << " ";
+
+                // Захватываем экран
+                cv::Mat screen = captureScreen( display, windowParametr[2], windowParametr[3], windowParametr[0], windowParametr[1] );
+
+                // Преобразование изображение в .jpg
+                std::vector<uchar> buf;
+                cv::imencode(".jpg", screen, buf);
+
+                // Сохраняем в файл
+                //cv::imwrite("screenshot.png", screen);
+                std::cout << "Скриншот сохранен в screenshot.png" << std::endl;
+                sendHttpResponse(client_sock, buf);
+                // Показываем в окне (опционально)
+                // cv::imshow("Screen", screen);
+                // char key = cv::waitKey(1000);
+                // if (key == 27) break;  // 27 = ESC
+            } catch (const std::exception& e) 
+            {
+                std::cerr << "Ошибка: " << e.what() << std::endl;
+            }
+        } else 
+        {
+            std::string html =
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/html\r\n\r\n"
+                "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Экран</title>"
+                "<style>body{text-align:center;background:#ddd;font-family:sans-serif}img{width:100%;max-width:800px}</style>"
+                "<img id='screen' src='/screenshot.jpg'>"
+                "<script>setInterval(()=>{const img = document.getElementById('screen');img.src='/screenshot.jpg?'+Date.now()},300)</script>"
+                "</body></html>";
+
+            send(client_sock, html.c_str(), html.size(), 0);
+        }
+
+        close(client_sock);
+    }
+
+    close(server_fd);
     XFree(list);
     XCloseDisplay(display);
     cv::destroyAllWindows();
@@ -93,7 +172,55 @@ int main(int argc, char const *argv[])
 }
 
 
-// Захват экрана через X11 и конвертация в OpenCV-матрицу
+//  ===   Проверка порта на занятость   ===
+bool is_port_in_use(int port) 
+{
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) 
+    {
+        std::cerr << "Ошибка создания сокета: " << strerror(errno) << std::endl;
+        return false;
+    }
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = INADDR_ANY;
+
+    // Пробуем привязать сокет к порту
+    if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) 
+    {
+        if (errno == EADDRINUSE) 
+        {
+            close(sock);
+            return true;  // Порт занят
+        }
+        close(sock);
+        return false;
+    }
+
+    close(sock);
+    return false;  // Порт свободен
+}
+
+// === Простая отправка HTTP-ответа с изображением ===
+void sendHttpResponse(int client_sock, const std::vector<uchar>& image_data) {
+    std::ostringstream oss;
+    oss << "HTTP/1.1 200 OK\r\n";
+    oss << "Content-Type: image/jpeg\r\n";
+    oss << "Content-Length: " << image_data.size() << "\r\n";
+    oss << "Cache-Control: no-cache, no-store, must-revalidate\r\n";
+    oss << "Pragma: no-cache\r\n";
+    oss << "Expires: 0\r\n";
+    oss << "Connection: close\r\n\r\n";
+
+    std::string headers = oss.str();
+    send(client_sock, headers.c_str(), headers.size(), 0);
+    send(client_sock, image_data.data(), image_data.size(), 0);
+}
+
+
+//  ===  Захват экрана через X11 и конвертация в OpenCV-матрицу   ===
 cv::Mat captureScreen(Display* disp, int width, int height, int x, int y) 
 {
     // Display* display = XOpenDisplay(":0");
@@ -126,7 +253,7 @@ cv::Mat captureScreen(Display* disp, int width, int height, int x, int y)
     return bgrMat;
 }
 
-// Получение полный список всех открытых окон
+//  ===  Получение полный список всех открытых окон  ===
 Window* getWindowList(Display* disp, unsigned long* len) 
 {
     Atom prop = XInternAtom(disp, "_NET_CLIENT_LIST", False);
@@ -144,7 +271,7 @@ Window* getWindowList(Display* disp, unsigned long* len)
     return (Window*)list;
 }
 
-// Получение название окон
+//  ===  Получение название окон  ===
 std::string getWindowName(Display* disp, Window win) 
 {
     Atom netWmName  = XInternAtom(disp, "_NET_WM_NAME", False);
@@ -172,7 +299,7 @@ std::string getWindowName(Display* disp, Window win)
     return name;
 }
 
-// Получение открытых
+//  ===  Получение открытых  ===
 int getWindowWorkspace(Display* disp, Window win) 
 {
     Atom wsAtom = XInternAtom(disp, "_NET_WM_DESKTOP", True);
@@ -193,7 +320,7 @@ int getWindowWorkspace(Display* disp, Window win)
     return -1; // неизвестно
 }
 
-// Получение кардинат окон
+//  ===  Получение кардинат окон   ===
 std::vector<int> getWindowGeometry(Display* disp, Window win) 
 {
     int x, y, width, height;
