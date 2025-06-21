@@ -27,10 +27,10 @@
 cv::Mat captureScreen(Display* disp, int width, int height, int x, int y);
 
 // Получение список окон 
-Window* getWindowList(Display* disp, unsigned long* len);
+Window* getWindowList(Display* disp, unsigned long* len, Atom prop);
 
 // Получение название окок
-std::string getWindowName(Display* disp, Window win); 
+std::string getWindowName(Display* disp, Window win, Atom netWmName, Atom utf8Str); 
 
 // Получение открытых окон
 int getWindowWorkspace(Display* disp, Window win);
@@ -46,10 +46,6 @@ bool is_port_in_use(int port);
 
 int main(int argc, char const *argv[])
 {
-
-
-    std::string command;
-
     // Открываем окно
     Display* display = XOpenDisplay(nullptr);
     if (!display) 
@@ -57,10 +53,28 @@ int main(int argc, char const *argv[])
         std::cerr << "Не удалось открыть дисплей\n";
         return 1;
     }
+
+    const Atom prop       =  XInternAtom(display, "_NET_CLIENT_LIST", False);
+    const Atom netWmName  =  XInternAtom(display, "_NET_WM_NAME", False);
+    const Atom utf8Str    =  XInternAtom(display, "UTF8_STRING", False);
+    
+    const std::string html =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: text/html\r\n\r\n"
+        "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Экран</title>"
+        "<style>body{text-align:center;background:#ddd;font-family:sans-serif}img{width:100%;max-width:800px}</style>"
+        "<img id='screen' src='/screenshot.jpg'>"
+        "<script>setInterval(()=>{const img = document.getElementById('screen');img.src='/screenshot.jpg?'+Date.now()},300)</script>"
+        "</body></html>";
+
+    int BUFFER_SIZE = 2048;
+    int PORT_HOST = 8085;
+
+    std::string command;
     
     // Getting windows list
     unsigned long len;
-    Window* list = getWindowList(display, &len);
+    Window* list = getWindowList(display, &len, prop);
     if (!list) 
     {
         std::cerr << "Не удалось получить список окон\n";
@@ -70,7 +84,7 @@ int main(int argc, char const *argv[])
     // Gettings windows name
     for (unsigned long i = 0; i < len; ++i) 
     {
-        std::string name = getWindowName(display, list[i]);
+        std::string name = getWindowName(display, list[i], netWmName, utf8Str);
         int ws = getWindowWorkspace(display, list[i]);
 
         std::cout << "Окно #[" << i << "] :::\n";
@@ -86,18 +100,19 @@ int main(int argc, char const *argv[])
     sockaddr_in address = {0};
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(8085);
+    address.sin_port = htons(PORT_HOST);
 
-    std::cout << is_port_in_use(address.sin_port) << std::endl;
-     // Проверка порта перед запуском
-    if (is_port_in_use(address.sin_port)) {
-        std::cerr << "🚨 Ошибка: Порт " << address.sin_port << " уже используется!\n";
-        std::cerr << "Возможные решения:\n";
-        std::cerr << "1. Закройте другую копию программы\n";
-        std::cerr << "2. Используйте другой порт: ./program 8086\n";
-        std::cerr << "3. Найдите и завершите процесс: sudo lsof -i :" << address.sin_port << "\n";
-        return 1;
-    }
+    // std::cout << is_port_in_use(address.sin_port) << std::endl;
+    
+    // // Проверка порта перед запуском
+    // if (is_port_in_use(address.sin_port)) {
+    //     std::cerr << "🚨 Ошибка: Порт " << address.sin_port << " уже используется!\n";
+    //     std::cerr << "Возможные решения:\n";
+    //     std::cerr << "1. Закройте другую копию программы\n";
+    //     std::cerr << "2. Используйте другой порт: ./program 8086\n";
+    //     std::cerr << "3. Найдите и завершите процесс: sudo lsof -i :" << address.sin_port << "\n";
+    //     return 1;
+    // }
 
     bind(server_fd, (struct sockaddr*)&address, sizeof(address));
     listen(server_fd, 5);
@@ -109,7 +124,7 @@ int main(int argc, char const *argv[])
         int client_sock = accept(server_fd, nullptr, nullptr);
         if (client_sock < 0) continue;
 
-        char buffer[2048] = {0};
+        char buffer[BUFFER_SIZE] = {0};
         read(client_sock, buffer, sizeof(buffer));
         std::string request(buffer);
 
@@ -136,27 +151,18 @@ int main(int argc, char const *argv[])
 
                 // Сохраняем в файл
                 //cv::imwrite("screenshot.png", screen);
-                std::cout << "Скриншот сохранен в screenshot.png" << std::endl;
+                std::cout << "Экран " << std::endl;
                 sendHttpResponse(client_sock, buf);
                 // Показываем в окне (опционально)
                 // cv::imshow("Screen", screen);
-                // char key = cv::waitKey(1000);
-                // if (key == 27) break;  // 27 = ESC
+                char key = cv::waitKey(1000);
+                if (key == 27) break;  // 27 = ESC
             } catch (const std::exception& e) 
             {
                 std::cerr << "Ошибка: " << e.what() << std::endl;
             }
         } else 
         {
-            std::string html =
-                "HTTP/1.1 200 OK\r\n"
-                "Content-Type: text/html\r\n\r\n"
-                "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Экран</title>"
-                "<style>body{text-align:center;background:#ddd;font-family:sans-serif}img{width:100%;max-width:800px}</style>"
-                "<img id='screen' src='/screenshot.jpg'>"
-                "<script>setInterval(()=>{const img = document.getElementById('screen');img.src='/screenshot.jpg?'+Date.now()},300)</script>"
-                "</body></html>";
-
             send(client_sock, html.c_str(), html.size(), 0);
         }
 
@@ -233,12 +239,10 @@ cv::Mat captureScreen(Display* disp, int width, int height, int x, int y)
     
     //750x487 (x=1158, y=59)
     // Создаем XImage
-    // XImage* img = XGetImage(display, root, 0, 0, width, height, AllPlanes, ZPixmap);
-        
     XImage* img = XGetImage(disp, root, x, y, width, height, AllPlanes, ZPixmap);
     if (!img) 
     {
-        XCloseDisplay(disp);
+        // XCloseDisplay(disp);
         throw std::runtime_error("Не удалось создать XImage");
     }
 
@@ -254,9 +258,8 @@ cv::Mat captureScreen(Display* disp, int width, int height, int x, int y)
 }
 
 //  ===  Получение полный список всех открытых окон  ===
-Window* getWindowList(Display* disp, unsigned long* len) 
+Window* getWindowList(Display* disp, unsigned long* len, Atom prop) 
 {
-    Atom prop = XInternAtom(disp, "_NET_CLIENT_LIST", False);
     Atom type;
     int format;
     unsigned long remain;
@@ -272,10 +275,8 @@ Window* getWindowList(Display* disp, unsigned long* len)
 }
 
 //  ===  Получение название окон  ===
-std::string getWindowName(Display* disp, Window win) 
+std::string getWindowName(Display* disp, Window win, Atom netWmName, Atom utf8Str) 
 {
-    Atom netWmName  = XInternAtom(disp, "_NET_WM_NAME", False);
-    Atom utf8Str    = XInternAtom(disp, "UTF8_STRING", False);
     Atom type;
     int format;
     unsigned long len, bytes_after;
