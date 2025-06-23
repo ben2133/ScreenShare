@@ -13,7 +13,8 @@ Window* getWindowList(Display* disp, unsigned long* len) {
     unsigned char* list;
 
     if (XGetWindowProperty(disp, XDefaultRootWindow(disp), prop, 0, 1024, False,
-                           XA_WINDOW, &type, &format, len, &remain, &list) != Success) {
+                           XA_WINDOW, &type, &format, len, &remain, &list) != Success) 
+    {
         return nullptr;
     }
 

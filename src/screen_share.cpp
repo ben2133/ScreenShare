@@ -3,12 +3,11 @@
 // g++ gui.cpp -o screen2 `pkg-config --cflags --libs opencv4` -lX11
 
 
-#include <functional>  // for function
 #include <iostream>  // for basic_ostream::operator<<, operator<<, endl, basic_ostream, basic_ostream<>::__ostream_type, cout, ostream
 #include <cstring>
-#include <memory>  // for shared_ptr, __shared_ptr_access
 #include <vector>  // for vector
 #include <string>    // for string, basic_string, allocator
+#include <thread>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -38,6 +37,9 @@ int getWindowWorkspace(Display* disp, Window win);
 // Получение размер и кардинат окон
 std::vector<int> getWindowGeometry(Display* disp, Window win);
 
+// Получение кардинат окон
+std::vector<int> getFullWindowGeometry(Display* disp);
+
 // Простая отправка HTTP-ответа с изображением
 void sendHttpResponse(int client_sock, const std::vector<uchar>& image_data);
 
@@ -62,7 +64,7 @@ int main(int argc, char const *argv[])
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: text/html\r\n\r\n"
         "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Экран</title>"
-        "<style>body{text-align:center;background:#ddd;font-family:sans-serif}img{width:100%;max-width:800px}</style>"
+        "<style>html, body{text-align:center;background:#302f30;font-family:sans-serif;display:}img{width:100%;max-width:1000px;border:3px solid #eb214d; border-radius:20px}</style>"
         "<img id='screen' src='/screenshot.jpg'>"
         "<script>setInterval(()=>{const img = document.getElementById('screen');img.src='/screenshot.jpg?'+Date.now()},300)</script>"
         "</body></html>";
@@ -81,15 +83,17 @@ int main(int argc, char const *argv[])
         return 1;
     }
 
+    std::cout << "\n::: Для вывод плного экрана введите команду 'full'" << "\n\n";
+
     // Gettings windows name
     for (unsigned long i = 0; i < len; ++i) 
     {
         std::string name = getWindowName(display, list[i], netWmName, utf8Str);
-        int ws = getWindowWorkspace(display, list[i]);
+        //int ws = getWindowWorkspace(display, list[i]);
 
-        std::cout << "Окно #[" << i << "] :::\n";
+        std::cout << "Окно [ " << i << " ] ::: ";
         std::cout << " ~ " << name << "\n";
-        std::cout << " Рабочее пространство: " << ws << "\n\n";
+        //std::cout << " Рабочее пространство: " << ws << "\n\n";
     }
 
     std::cout << ">>> ";
@@ -101,18 +105,9 @@ int main(int argc, char const *argv[])
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons(PORT_HOST);
-
-    // std::cout << is_port_in_use(address.sin_port) << std::endl;
     
-    // // Проверка порта перед запуском
-    // if (is_port_in_use(address.sin_port)) {
-    //     std::cerr << "🚨 Ошибка: Порт " << address.sin_port << " уже используется!\n";
-    //     std::cerr << "Возможные решения:\n";
-    //     std::cerr << "1. Закройте другую копию программы\n";
-    //     std::cerr << "2. Используйте другой порт: ./program 8086\n";
-    //     std::cerr << "3. Найдите и завершите процесс: sudo lsof -i :" << address.sin_port << "\n";
-    //     return 1;
-    // }
+    int opt = 1;
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     bind(server_fd, (struct sockaddr*)&address, sizeof(address));
     listen(server_fd, 5);
@@ -123,50 +118,53 @@ int main(int argc, char const *argv[])
     {
         int client_sock = accept(server_fd, nullptr, nullptr);
         if (client_sock < 0) continue;
-
-        char buffer[BUFFER_SIZE] = {0};
-        read(client_sock, buffer, sizeof(buffer));
-        std::string request(buffer);
-
-        std::istringstream iss(request);
-        std::string method, path;
-        iss >> method >> path;
-
-        if (path.find("/screenshot") == 0)
+        
+        std::thread([client_sock, display, list, netWmName, utf8Str, html, command]() 
         {
-            try 
+            char buffer[2048] = {0};
+            read(client_sock, buffer, sizeof(buffer));
+            std::string request(buffer);
+
+            std::istringstream iss(request);
+            std::string method, path;
+            iss >> method >> path;
+
+
+
+            if (path.find("/screenshot") == 0) 
             {
-                // std::cout << typeid(std::stoi(command)).name() << std::endl;
-                std::vector<int> windowParametr = getWindowGeometry(display, list[ std::stoi(command) ]);
+                try 
+                {
+                    std::vector<int> windowParametr;
 
-                std::cout << " { " << windowParametr[2] << "x" << windowParametr[3] << " }";
-                std::cout << " ::: x=" << windowParametr[0] << " y=" << windowParametr[1] << " ";
+                    if ( command == "full" )
+                    {
+                        windowParametr = getFullWindowGeometry(display);
+                    } else 
+                    {
+                        windowParametr = getWindowGeometry(display, list[std::stoi(command)]);
+                    }
+                    cv::Mat screen = captureScreen(display, windowParametr[2], windowParametr[3], windowParametr[0], windowParametr[1]);
 
-                // Захватываем экран
-                cv::Mat screen = captureScreen( display, windowParametr[2], windowParametr[3], windowParametr[0], windowParametr[1] );
+                    std::vector<uchar> buf;
+                    cv::imencode(".jpg", screen, buf);
+                    sendHttpResponse(client_sock, buf);
 
-                // Преобразование изображение в .jpg
-                std::vector<uchar> buf;
-                cv::imencode(".jpg", screen, buf);
+                    std::cout << " { " << windowParametr[2] << "x" << windowParametr[3] << " }";
+                    std::cout << " ::: x=" << windowParametr[0] << " y=" << windowParametr[1] << " ";
+                    std::cout << "Экран захвачен" << std::endl;
 
-                // Сохраняем в файл
-                //cv::imwrite("screenshot.png", screen);
-                std::cout << "Экран " << std::endl;
-                sendHttpResponse(client_sock, buf);
-                // Показываем в окне (опционально)
-                // cv::imshow("Screen", screen);
-                char key = cv::waitKey(1000);
-                if (key == 27) break;  // 27 = ESC
-            } catch (const std::exception& e) 
+                } catch (const std::exception& e) 
+                {
+                    std::cerr << "Ошибка: " << e.what() << std::endl;
+                }
+            } else 
             {
-                std::cerr << "Ошибка: " << e.what() << std::endl;
+                send(client_sock, html.c_str(), html.size(), 0);
             }
-        } else 
-        {
-            send(client_sock, html.c_str(), html.size(), 0);
-        }
 
-        close(client_sock);
+            close(client_sock);
+        }).detach();  // запускаем в отдельном потоке
     }
 
     close(server_fd);
@@ -326,6 +324,7 @@ std::vector<int> getWindowGeometry(Display* disp, Window win)
 {
     int x, y, width, height;
     XWindowAttributes attr;
+
     if (XGetWindowAttributes(disp, win, &attr)) 
     {
         Window child;
@@ -341,4 +340,16 @@ std::vector<int> getWindowGeometry(Display* disp, Window win)
     }
 
     return { x, y, width, height };
+}
+
+//  ===  Получение кардинат окон   ===
+std::vector<int> getFullWindowGeometry(Display* disp) 
+{
+    // Получаем ширину и высоту экрана
+    int screen = DefaultScreen(disp);
+    int width = DisplayWidth(disp, screen);
+    int height = DisplayHeight(disp, screen);
+
+
+    return { 0, 0, width, height };
 }
