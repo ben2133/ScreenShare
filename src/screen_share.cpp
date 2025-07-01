@@ -1,5 +1,5 @@
 // g++ -std=c++17 -o tui interfeyc.cpp -lftxui-component -lftxui-dom -lftxui-screen
-// g++ gui.cpp -o screen2 -I/usr/include/opencv4 -lX11 -lopencv_core -lopencv_highgui  -lopencv_imgproc -lopencv_imgcodecs -lftxui-component -lftxui-dom -lftxui-screen
+// g++ src/srceen_share.cpp -o screen2 -std=c++17 -I/usr/include/opencv4 -lX11 -lopencv_core -lopencv_highgui  -lopencv_imgproc -lopencv_imgcodecs -lftxui-component -lftxui-dom -lftxui-screen
 // g++ gui.cpp -o screen2 `pkg-config --cflags --libs opencv4` -lX11
 
 
